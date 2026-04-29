@@ -43,6 +43,16 @@ export interface RecallEvent {
   notes?: string;
 }
 
+/** Metadata for files stored in IndexedDB (blobs keyed by fileId). */
+export interface AttachmentMeta {
+  fileId: string;
+  unitId: string;
+  name: string;
+  mimeType: string;
+  byteSize: number;
+  addedAt: string;
+}
+
 export interface BaseUnit {
   id: string;
   type: UnitType;
@@ -54,6 +64,8 @@ export interface BaseUnit {
   tags: CompareTag[];
   reflection?: string;
   recall: RecallEvent[];
+  /** References uploads in IndexedDB for this unit. */
+  attachments?: AttachmentMeta[];
   archived?: boolean;
 }
 

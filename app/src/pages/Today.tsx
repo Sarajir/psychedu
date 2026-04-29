@@ -1,6 +1,7 @@
 import { useState } from "react";
 import { COMPARE_TAGS } from "../types";
 import type {
+  AttachmentMeta,
   CompareTag,
   ConceptUnit,
   Confidence,
@@ -10,6 +11,7 @@ import type {
 } from "../types";
 import { newId, upsertUnit } from "../storage";
 import { RetrievalTimer } from "../components/RetrievalTimer";
+import { AttachmentPanel } from "../components/AttachmentPanel";
 
 type Stage = "predict" | "retrieve" | "compare" | "saved";
 
@@ -20,6 +22,9 @@ interface Props {
 export function TodayPage({ onSaved }: Props) {
   const [type, setType] = useState<UnitType>("concept");
   const [stage, setStage] = useState<Stage>("predict");
+  /** Stable id for this draft unit so uploads land in IndexedDB before Save. */
+  const [draftUnitId, setDraftUnitId] = useState(() => newId());
+  const [attachments, setAttachments] = useState<AttachmentMeta[]>([]);
 
   const [topic, setTopic] = useState("");
   const [course, setCourse] = useState("");
@@ -38,6 +43,8 @@ export function TodayPage({ onSaved }: Props) {
 
   function reset() {
     setStage("predict");
+    setDraftUnitId(newId());
+    setAttachments([]);
     setTopic("");
     setCourse("");
     setSource("");
@@ -70,10 +77,12 @@ export function TodayPage({ onSaved }: Props) {
 
   function save() {
     const now = new Date().toISOString();
+    const att =
+      attachments.length > 0 ? attachments.map((a) => ({ ...a })) : undefined;
     let unit: Unit;
     if (type === "concept") {
       const u: ConceptUnit = {
-        id: newId(),
+        id: draftUnitId,
         type: "concept",
         topic: topic.trim() || "Untitled concept",
         course: course.trim() || undefined,
@@ -88,11 +97,12 @@ export function TodayPage({ onSaved }: Props) {
         tags,
         reflection: reflection.trim() || undefined,
         recall: [],
+        attachments: att,
       };
       unit = u;
     } else {
       const u: ReadingUnit = {
-        id: newId(),
+        id: draftUnitId,
         type: "reading",
         topic: topic.trim() || "Untitled reading",
         source: source.trim() || undefined,
@@ -104,6 +114,7 @@ export function TodayPage({ onSaved }: Props) {
         tags,
         reflection: reflection.trim() || undefined,
         recall: [],
+        attachments: att,
       };
       unit = u;
     }
@@ -255,6 +266,13 @@ export function TodayPage({ onSaved }: Props) {
             )}
           </div>
 
+          <AttachmentPanel
+            unitId={draftUnitId}
+            attachments={attachments}
+            onChange={setAttachments}
+            allowUpload
+          />
+
           <div className="flex items-center justify-between pt-2">
             <div className="text-xs text-ink-500">
               Closed-book retrieval limit:{" "}
@@ -292,6 +310,13 @@ export function TodayPage({ onSaved }: Props) {
               Don&rsquo;t look at the source. Bullets are fine. Stop early
               with the button — partial credit is the point.
             </p>
+            {attachments.length > 0 && (
+              <p className="text-xs text-amber-800 bg-amber-50 border border-amber-100 rounded-md px-2 py-1.5 mt-2">
+                You uploaded {attachments.length} file
+                {attachments.length > 1 ? "s" : ""} — keep them closed until
+                Compare.
+              </p>
+            )}
           </div>
           <RetrievalTimer
             seconds={timerSeconds}
@@ -335,6 +360,15 @@ export function TodayPage({ onSaved }: Props) {
               These tags are how the &ldquo;My biases&rdquo; page gets built.
             </p>
           </div>
+
+          {attachments.length > 0 && (
+            <AttachmentPanel
+              unitId={draftUnitId}
+              attachments={attachments}
+              onChange={setAttachments}
+              allowUpload={false}
+            />
+          )}
 
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
             <div>

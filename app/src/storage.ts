@@ -116,6 +116,8 @@ export function exportCSV(units: Unit[]): string {
     "tags",
     "reflection",
     "followUpQuestion",
+    "attachment_count",
+    "attachment_names",
     "recall_attempts",
     "recall_passes",
     "last_recall_at",
@@ -126,6 +128,7 @@ export function exportCSV(units: Unit[]): string {
     const last = (u.recall ?? [])[u.recall.length - 1];
     const courseOrSource =
       u.type === "concept" ? u.course ?? "" : u.source ?? "";
+    const att = u.attachments ?? [];
     return [
       u.id,
       u.type,
@@ -140,6 +143,8 @@ export function exportCSV(units: Unit[]): string {
       tags,
       u.reflection ?? "",
       u.type === "reading" ? u.followUpQuestion ?? "" : "",
+      att.length,
+      att.map((a) => a.name).join("|"),
       (u.recall ?? []).length,
       passes,
       last?.at ?? "",

@@ -257,6 +257,12 @@ export function BiasesPage({ units }: Props) {
                     <div className="font-medium text-ink-900 truncate">
                       {u.topic}
                     </div>
+                    {(u.attachments?.length ?? 0) > 0 && (
+                      <div className="text-xs text-ink-500 mt-0.5">
+                        {u.attachments?.length} file
+                        {(u.attachments?.length ?? 0) === 1 ? "" : "s"} attached
+                      </div>
+                    )}
                   </div>
                   <div className="flex flex-wrap gap-1.5 justify-end">
                     {u.tags.map((t) => (

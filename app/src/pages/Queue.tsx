@@ -8,6 +8,7 @@ import {
 } from "../storage";
 import type { Unit } from "../types";
 import { TagBadge } from "../components/Tag";
+import { AttachmentPanel } from "../components/AttachmentPanel";
 
 interface Props {
   units: Unit[];
@@ -122,6 +123,15 @@ export function QueuePage({ units, onChange }: Props) {
                     <TagBadge key={t} tag={t} />
                   ))}
                 </div>
+              )}
+              {(active.attachments?.length ?? 0) > 0 && (
+                <AttachmentPanel
+                  unitId={active.id}
+                  attachments={active.attachments ?? []}
+                  onChange={() => {}}
+                  allowUpload={false}
+                  compact
+                />
               )}
             </div>
           </details>
