@@ -8,7 +8,8 @@ export interface Env {
   ALLOWED_ORIGINS?: string;
 }
 
-const MAX_BODY_BYTES = 18 * 1024 * 1024;
+/** Incoming JSON (incl. base64) must stay reasonable for Workers + Gemini inline. */
+const MAX_BODY_BYTES = 40 * 1024 * 1024;
 
 const UPSTREAM = {
   gemini: (model: string, apiKey: string) =>

@@ -18,8 +18,23 @@ import {
 } from "../lib/llmConfig";
 import { LLM_PROVIDERS, providerById, type LlmProviderId } from "../lib/llmProviders";
 
-/** ~3.5MB raw file before base64 — keeps JSON under Worker limits */
-const MAX_INLINE_BYTES = 3.5 * 1024 * 1024;
+/**
+ * Max raw file size for inline upload (base64 expands ~33% in JSON).
+ * 整份大 PPT（几十～上百 MB）无法走浏览器单次 JSON，需拆分/压缩/导出部分 PDF。
+ */
+const MAX_INLINE_BYTES = 10 * 1024 * 1024;
+
+function mb(bytes: number): string {
+  return (bytes / 1024 / 1024).toFixed(1);
+}
+
+function fileTooLargeMessage(file: File): string {
+  return [
+    `你选的文件约 ${mb(file.size)} MB，超过本页单次上限（${mb(MAX_INLINE_BYTES)} MB）。`,
+    `整份课件常含大量图片/视频，即使用更大服务器也无法在浏览器里「一次塞进」请求。`,
+    `可以：① PowerPoint「另存为 → PDF」并只勾选本章几页；②「文件 → 压缩媒体」后再导出；③ 把大纲粘贴到「学习主题」；④ 拆成多份小于 ${mb(MAX_INLINE_BYTES)} MB 的 PDF 分次生成。`,
+  ].join("\n");
+}
 
 function inferMime(file: File): string {
   if (file.type && file.type !== "application/octet-stream") return file.type;
@@ -96,6 +111,7 @@ export function AiPage() {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [output, setOutput] = useState("");
+  const [fileHint, setFileHint] = useState<string | null>(null);
 
   const presets = useMemo(() => listPresets(), []);
   const pcfg = useMemo(() => providerById(provider), [provider]);
@@ -105,6 +121,22 @@ export function AiPage() {
     setModel(cfg.models[0].id);
     setApiKeyInput(getApiKeyForProvider(provider));
   }, [provider]);
+
+  useEffect(() => {
+    if (!file) {
+      setFileHint(null);
+      return;
+    }
+    if (provider !== "gemini") {
+      setFileHint(null);
+      return;
+    }
+    if (file.size > MAX_INLINE_BYTES) {
+      setFileHint(fileTooLargeMessage(file));
+    } else {
+      setFileHint(null);
+    }
+  }, [file, provider]);
 
   const saveSettings = useCallback(() => {
     setGeminiWorkerBase(workerInput);
@@ -144,9 +176,7 @@ export function AiPage() {
 
         if (file) {
           if (file.size > MAX_INLINE_BYTES) {
-            setError(
-              `文件过大（>${Math.round(MAX_INLINE_BYTES / 1024 / 1024)}MB）。请换更小的文件或改用 .txt/.md。`,
-            );
+            setError(fileTooLargeMessage(file));
             return;
           }
           const mime = inferMime(file);
@@ -216,7 +246,7 @@ export function AiPage() {
           return;
         }
         if (file.size > MAX_INLINE_BYTES) {
-          setError("文本文件过大，请拆成多段。");
+          setError(fileTooLargeMessage(file));
           return;
         }
       }
@@ -397,7 +427,7 @@ export function AiPage() {
         </div>
         <div>
           <label className="label">
-            上传材料（可选，≤约 3.5MB）
+            上传材料（可选，Gemini 单文件 ≤ 约 {mb(MAX_INLINE_BYTES)} MB）
             {provider !== "gemini" && (
               <span className="normal-case font-normal text-amber-800 ml-1">
                 — 当前线路仅 .txt / .md / .csv 或把内容写进「学习主题」
@@ -416,7 +446,16 @@ export function AiPage() {
           />
           {file && (
             <p className="text-xs text-ink-500 mt-1">
-              已选：{file.name}（{Math.round(file.size / 1024)} KB）
+              已选：{file.name}（
+              {file.size >= 1024 * 1024
+                ? `${mb(file.size)} MB`
+                : `${Math.round(file.size / 1024)} KB`}
+              ）
+            </p>
+          )}
+          {fileHint && (
+            <p className="text-xs text-amber-900 bg-amber-50 border border-amber-200 rounded-md px-3 py-2 mt-2 whitespace-pre-line leading-relaxed">
+              {fileHint}
             </p>
           )}
           {!file && (
@@ -428,7 +467,11 @@ export function AiPage() {
         <button
           type="button"
           className="btn-primary w-full sm:w-auto min-h-[44px]"
-          disabled={busy}
+          disabled={
+            busy ||
+            (provider === "gemini" &&
+              Boolean(file && file.size > MAX_INLINE_BYTES))
+          }
           onClick={() => void generate()}
         >
           {busy ? "生成中…" : "③ 调用模型生成"}

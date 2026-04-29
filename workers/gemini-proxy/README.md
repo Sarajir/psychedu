@@ -37,7 +37,7 @@ Supported upstreams (allowlisted only):
 
 ## Limits
 
-- Request size capped in worker (~18 MB). The web UI also caps inline PDFs smaller than that for reliability.
+- Request body capped in worker (~40 MB JSON). The web UI caps **raw** upload to **~10 MB** per file (base64 inflates the payload). Decks with many images often exceed this — export a **subset of slides to PDF** or compress media, then upload.
 
 ## Security notes
 
