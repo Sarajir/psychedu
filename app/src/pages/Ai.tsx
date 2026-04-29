@@ -339,6 +339,35 @@ export function AiPage() {
           </a>
           （支持 Gemini / DeepSeek / Groq）。
         </p>
+        <div className="text-sm text-ink-700 bg-ink-50 border border-ink-200 rounded-lg px-4 py-3 space-y-2 leading-relaxed">
+          <p className="font-medium text-ink-900">大文件想「最简单」？</p>
+          <p>
+            在 GitHub Pages 这种<strong>纯静态页</strong>里，要安全用你的 Key、又要传几十～上百 MB
+            课件，中间就免不了 Worker / 分块上传这类工程——是为「全在站里点一下」准备的，不是必选项。
+          </p>
+          <p>
+            <strong>最省事的做法</strong>：打开{" "}
+            <a
+              className="text-accent underline"
+              href="https://aistudio.google.com/"
+              target="_blank"
+              rel="noreferrer"
+            >
+              Google AI Studio
+            </a>
+            、
+            <a
+              className="text-accent underline"
+              href="https://gemini.google.com/"
+              target="_blank"
+              rel="noreferrer"
+            >
+              Gemini
+            </a>
+            或 ChatGPT 网页版，<strong>直接拖附件</strong>，用自然语言描述你的需求，让模型生成答案，再把结果复制到笔记或本站的「Today」里做复习。本站仍适合<strong>小文件</strong>（约几
+            MB 内）或只贴文字大纲时一键生成。
+          </p>
+        </div>
       </header>
 
       <section className="card p-6 space-y-4">
