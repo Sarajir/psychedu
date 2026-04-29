@@ -17,6 +17,7 @@ import {
 import {
   getApiKeyForProvider,
   getGeminiWorkerBase,
+  resolveGeminiWorkerBase,
   setApiKeyForProvider,
   setGeminiWorkerBase,
 } from "../lib/llmConfig";
@@ -119,23 +120,32 @@ export function AiPage() {
   }, [file, provider]);
 
   const saveSettings = useCallback(() => {
-    setGeminiWorkerBase(workerInput);
+    const r = resolveGeminiWorkerBase(workerInput);
+    if (!r.ok) {
+      setError(r.error);
+      return;
+    }
+    setError(null);
+    setWorkerInput(r.worker);
+    setGeminiWorkerBase(r.worker);
     setApiKeyForProvider(provider, apiKeyInput);
   }, [workerInput, apiKeyInput, provider]);
 
   const generate = useCallback(async () => {
     setError(null);
     setOutput("");
-    const worker = workerInput.trim().replace(/\/$/, "");
-    const key = apiKeyInput.trim();
-    if (!worker) {
-      setError("请填写并保存 Worker URL（部署说明见仓库 workers/gemini-proxy/README.md）。");
+    const resolved = resolveGeminiWorkerBase(workerInput);
+    if (!resolved.ok) {
+      setError(resolved.error);
       return;
     }
+    const worker = resolved.worker;
+    const key = apiKeyInput.trim();
     if (!key) {
       setError("请填写并保存当前线路对应的 API Key。");
       return;
     }
+    setWorkerInput(worker);
     setGeminiWorkerBase(worker);
     setApiKeyForProvider(provider, key);
 
@@ -302,7 +312,7 @@ export function AiPage() {
       setBusyHint(null);
       setBusy(false);
     }
-  }, [apiKeyInput, file, model, preset, provider, topicHint, workerInput]);
+  }, [apiKeyInput, file, model, preset, provider, topicHint, workerInput, setWorkerInput]);
 
   return (
     <div className="max-w-3xl mx-auto px-4 py-8 space-y-6 pb-16">
@@ -345,6 +355,11 @@ export function AiPage() {
             可选环境变量{" "}
             <code className="bg-ink-100 px-1 rounded">VITE_GEMINI_WORKER_URL</code>{" "}
             作为默认；此处保存会覆盖。
+          </p>
+          <p className="text-xs text-amber-900 bg-amber-50 border border-amber-100 rounded-md px-2 py-1.5 mt-2 leading-relaxed">
+            必须填 <strong>Cloudflare Worker</strong> 地址（如 <code className="text-xs">*.workers.dev</code>
+            ），<strong>不要</strong>填本站的 <code className="text-xs">github.io/…</code> 页面地址，否则大文件上传会得到{" "}
+            <strong>405</strong>。
           </p>
         </div>
         <div>
