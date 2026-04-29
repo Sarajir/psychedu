@@ -3,15 +3,17 @@ import { TodayPage } from "./pages/Today";
 import { QueuePage } from "./pages/Queue";
 import { BiasesPage } from "./pages/Biases";
 import { GuidePage } from "./pages/Guide";
+import { AiPage } from "./pages/Ai";
 import { dueUnits, loadUnits } from "./storage";
 import type { Unit } from "./types";
 
 const INTRO_BANNER_KEY = "psychedu.dismissIntroBanner";
 
-type Tab = "guide" | "today" | "queue" | "biases";
+type Tab = "guide" | "ai" | "today" | "queue" | "biases";
 
 const TABS: { id: Tab; label: string; sub: string }[] = [
   { id: "guide", label: "入门", sub: "教程" },
+  { id: "ai", label: "AI", sub: "BYOK 生成" },
   { id: "today", label: "Today", sub: "Predict → recall → compare" },
   { id: "queue", label: "Recall queue", sub: "Closed-book re-recall" },
   { id: "biases", label: "My biases", sub: "Aggregate + export" },
@@ -118,6 +120,7 @@ export default function App() {
         {tab === "guide" && (
           <GuidePage onStart={() => setTab("today")} />
         )}
+        {tab === "ai" && <AiPage />}
         {tab === "today" && <TodayPage onSaved={setUnits} />}
         {tab === "queue" && (
           <QueuePage units={units} onChange={setUnits} />
@@ -128,7 +131,7 @@ export default function App() {
       <footer className="border-t border-ink-100 bg-white">
         <div className="max-w-5xl mx-auto px-4 py-3 text-xs text-ink-500 flex items-center justify-between">
           <span>
-            Local-only · everything lives in this browser&rsquo;s storage.
+            Local-only core · optional AI calls your Worker + Gemini (BYOK).
           </span>
           <span className="hidden sm:block">
             metacognition · retrieval practice · spaced review

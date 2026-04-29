@@ -59,6 +59,18 @@ export function GuidePage({ onStart }: Props) {
         </p>
       </section>
 
+      <section className="card p-6 space-y-2 border-ink-100">
+        <h2 className="text-base font-semibold text-ink-900">可选：「AI」页是干什么的？</h2>
+        <p className="text-sm text-ink-700 leading-relaxed">
+          顶部导航的<strong>「AI」</strong>是<strong>额外脚手架</strong>：你上传 PDF/图片或说明主题，用<strong>自己的</strong>
+          Gemini API Key + 你部署的 Cloudflare Worker，让模型生成「复习提纲 / 填空 / 问答卡」等<strong>中文学习材料</strong>。
+          它<strong>不替代</strong>上面的「预测—闭卷—对照」闭环；更合理的用法是：把生成内容当作「材料」，再放进「Today」里做闭卷与校准。
+        </p>
+        <p className="text-xs text-ink-500">
+          部署说明见仓库目录 <code className="bg-ink-100 px-1 rounded">workers/gemini-proxy</code>。
+        </p>
+      </section>
+
       <section className="space-y-3">
         <h2 className="text-base font-semibold text-ink-900">和「教育心理」有什么关系？</h2>
         <ul className="text-sm text-ink-700 space-y-2 list-disc pl-5 leading-relaxed">

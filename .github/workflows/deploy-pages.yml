@@ -28,6 +28,8 @@ jobs:
         working-directory: app
         env:
           BASE_PATH: /psychedu/
+          # Optional repo secret: default Gemini worker URL baked into static build
+          VITE_GEMINI_WORKER_URL: ${{ secrets.VITE_GEMINI_WORKER_URL }}
         run: |
           npm ci
           npm run build
