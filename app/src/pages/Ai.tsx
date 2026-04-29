@@ -1,26 +1,22 @@
-import { useCallback, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import {
   buildPresetPayload,
   listPresets,
   type PresetId,
 } from "../lib/aiPrompts";
 import {
-  callGeminiProxy,
+  callGenerateProxy,
+  extractChatCompletionText,
   extractGeminiBlockReason,
   extractGeminiText,
-  type GeneratePayload,
-} from "../lib/geminiProxy";
+} from "../lib/llmProxy";
 import {
-  getGeminiApiKey,
+  getApiKeyForProvider,
   getGeminiWorkerBase,
-  setGeminiApiKey,
+  setApiKeyForProvider,
   setGeminiWorkerBase,
-} from "../lib/geminiConfig";
-
-const MODELS = [
-  { id: "gemini-2.0-flash", label: "gemini-2.0-flash（稳）" },
-  { id: "gemini-2.5-flash", label: "gemini-2.5-flash（新）" },
-];
+} from "../lib/llmConfig";
+import { LLM_PROVIDERS, providerById, type LlmProviderId } from "../lib/llmProviders";
 
 /** ~3.5MB raw file before base64 — keeps JSON under Worker limits */
 const MAX_INLINE_BYTES = 3.5 * 1024 * 1024;
@@ -57,6 +53,14 @@ function isOfficeDocumentMime(m: string): boolean {
   );
 }
 
+function isBinaryMultimodal(mime: string): boolean {
+  return (
+    mime === "application/pdf" ||
+    mime.startsWith("image/") ||
+    isOfficeDocumentMime(mime)
+  );
+}
+
 function readFileAsBase64(file: File): Promise<string> {
   return new Promise((resolve, reject) => {
     const r = new FileReader();
@@ -81,8 +85,11 @@ function readFileAsText(file: File): Promise<string> {
 
 export function AiPage() {
   const [workerInput, setWorkerInput] = useState(getGeminiWorkerBase);
-  const [apiKeyInput, setApiKeyInput] = useState(getGeminiApiKey);
-  const [model, setModel] = useState(MODELS[0].id);
+  const [provider, setProvider] = useState<LlmProviderId>("gemini");
+  const [model, setModel] = useState(LLM_PROVIDERS[0].models[0].id);
+  const [apiKeyInput, setApiKeyInput] = useState(() =>
+    getApiKeyForProvider("gemini"),
+  );
   const [preset, setPreset] = useState<PresetId>("pack");
   const [topicHint, setTopicHint] = useState("");
   const [file, setFile] = useState<File | null>(null);
@@ -91,11 +98,18 @@ export function AiPage() {
   const [output, setOutput] = useState("");
 
   const presets = useMemo(() => listPresets(), []);
+  const pcfg = useMemo(() => providerById(provider), [provider]);
+
+  useEffect(() => {
+    const cfg = providerById(provider);
+    setModel(cfg.models[0].id);
+    setApiKeyInput(getApiKeyForProvider(provider));
+  }, [provider]);
 
   const saveSettings = useCallback(() => {
     setGeminiWorkerBase(workerInput);
-    setGeminiApiKey(apiKeyInput);
-  }, [workerInput, apiKeyInput]);
+    setApiKeyForProvider(provider, apiKeyInput);
+  }, [workerInput, apiKeyInput, provider]);
 
   const generate = useCallback(async () => {
     setError(null);
@@ -107,85 +121,142 @@ export function AiPage() {
       return;
     }
     if (!key) {
-      setError("请填写并保存 Gemini API Key（建议用 Google AI Studio 免费申请）。");
+      setError("请填写并保存当前线路对应的 API Key。");
       return;
     }
     setGeminiWorkerBase(worker);
-    setGeminiApiKey(key);
+    setApiKeyForProvider(provider, key);
 
     const { systemInstruction, userSuffix } = buildPresetPayload({
       preset,
       topicHint,
       fileMime: file ? inferMime(file) : null,
-      hasBinary: Boolean(file),
+      hasBinary: Boolean(file && isBinaryMultimodal(inferMime(file))),
     });
 
-    const parts: Record<string, unknown>[] = [];
-
-    if (file) {
-      if (file.size > MAX_INLINE_BYTES) {
-        setError(
-          `文件过大（>${Math.round(MAX_INLINE_BYTES / 1024 / 1024)}MB）。请换更小的 PDF/图片，或改用 .txt/.md 纯文本。`,
-        );
-        return;
-      }
-      const mime = inferMime(file);
-      if (
-        mime === "application/pdf" ||
-        mime.startsWith("image/") ||
-        isOfficeDocumentMime(mime)
-      ) {
-        const b64 = await readFileAsBase64(file);
-        parts.push({
-          inline_data: {
-            mime_type: mime,
-            data: b64,
-          },
-        });
-      } else if (
-        mime === "text/plain" ||
-        mime === "text/markdown" ||
-        mime === "text/csv" ||
-        file.name.endsWith(".md") ||
-        file.name.endsWith(".txt")
-      ) {
-        const txt = await readFileAsText(file);
-        parts.push({
-          text: `【用户上传的文本文件：${file.name}】\n${txt.slice(0, 120_000)}`,
-        });
-      } else {
-        setError(
-          `暂不支持的文件类型：${mime}。请用 PDF、PPT/PPTX、Word、常见图片，或 .txt/.md。（若 Office 文件生成失败，可另存为 PDF 再试）`,
-        );
-        return;
-      }
-    }
-
-    parts.push({
-      text: `${userSuffix}\n\n若材料语言非中文，请仍用中文输出学习材料。`,
-    });
-
-    const payload: GeneratePayload = {
-      model,
-      contents: [{ role: "user", parts }],
-      generationConfig: {
-        temperature: 0.35,
-        maxOutputTokens: 8192,
-      },
-      systemInstruction,
-    };
+    const systemText =
+      systemInstruction?.parts?.map((x) => x.text).join("\n") ?? "";
 
     setBusy(true);
     try {
-      const data = await callGeminiProxy(worker, key, payload);
-      const blocked = extractGeminiBlockReason(data);
-      if (blocked) {
-        setError(`请求被模型拦截：${blocked}`);
+      if (provider === "gemini") {
+        const parts: Record<string, unknown>[] = [];
+
+        if (file) {
+          if (file.size > MAX_INLINE_BYTES) {
+            setError(
+              `文件过大（>${Math.round(MAX_INLINE_BYTES / 1024 / 1024)}MB）。请换更小的文件或改用 .txt/.md。`,
+            );
+            return;
+          }
+          const mime = inferMime(file);
+          if (isBinaryMultimodal(mime)) {
+            const b64 = await readFileAsBase64(file);
+            parts.push({
+              inline_data: {
+                mime_type: mime,
+                data: b64,
+              },
+            });
+          } else if (
+            mime === "text/plain" ||
+            mime === "text/markdown" ||
+            mime === "text/csv" ||
+            file.name.endsWith(".md") ||
+            file.name.endsWith(".txt")
+          ) {
+            const txt = await readFileAsText(file);
+            parts.push({
+              text: `【用户上传的文本文件：${file.name}】\n${txt.slice(0, 120_000)}`,
+            });
+          } else {
+            setError(
+              `暂不支持的文件类型：${mime}。请用 PDF、PPT/PPTX、Word、常见图片，或 .txt/.md。`,
+            );
+            return;
+          }
+        }
+
+        parts.push({
+          text: `${userSuffix}\n\n若材料语言非中文，请仍用中文输出学习材料。`,
+        });
+
+        const body = {
+          provider: "gemini" as const,
+          model,
+          contents: [{ role: "user", parts }],
+          generationConfig: {
+            temperature: 0.35,
+            maxOutputTokens: 8192,
+          },
+          systemInstruction,
+        };
+
+        const data = await callGenerateProxy(worker, key, body);
+        const blocked = extractGeminiBlockReason(data);
+        if (blocked) {
+          setError(`请求被模型拦截：${blocked}`);
+          return;
+        }
+        const text = extractGeminiText(data);
+        if (!text.trim()) {
+          setError("模型返回为空。可能被安全策略拦截，请换材料或换模型再试。");
+          return;
+        }
+        setOutput(text);
         return;
       }
-      const text = extractGeminiText(data);
+
+      if (file) {
+        const mime = inferMime(file);
+        if (isBinaryMultimodal(mime)) {
+          setError(
+            "DeepSeek / Groq 本页仅支持「文本」通道：不能直传 PDF/Office/图片。请改用 **Gemini** 线路，或把正文粘贴到「学习主题」，或上传 .txt/.md。",
+          );
+          return;
+        }
+        if (file.size > MAX_INLINE_BYTES) {
+          setError("文本文件过大，请拆成多段。");
+          return;
+        }
+      }
+
+      let userBody = "";
+      if (topicHint.trim()) {
+        userBody += `【学习主题/场景】\n${topicHint.trim()}\n\n`;
+      }
+      if (file) {
+        const mime = inferMime(file);
+        if (
+          mime === "text/plain" ||
+          mime === "text/markdown" ||
+          mime === "text/csv" ||
+          file.name.endsWith(".md") ||
+          file.name.endsWith(".txt")
+        ) {
+          const txt = await readFileAsText(file);
+          userBody += `【上传文件：${file.name}】\n${txt.slice(0, 120_000)}\n\n`;
+        }
+      }
+      userBody += `${userSuffix}\n\n请用简体中文输出学习材料。`;
+
+      const messages = [
+        { role: "system", content: systemText },
+        { role: "user", content: userBody },
+      ];
+
+      const body = {
+        provider,
+        model,
+        messages,
+        temperature: 0.35,
+        max_tokens: 8192,
+      };
+
+      const data = await callGenerateProxy(worker, key, body);
+      const text = extractChatCompletionText(data);
       if (!text.trim()) {
-        setError("模型返回为空。可能被安全策略拦截，请换材料或换模型再试。");
+        setError("模型返回为空。请检查模型名是否在厂商控制台仍可用，或换一条线路。");
         return;
       }
       setOutput(text);
@@ -194,7 +265,7 @@ export function AiPage() {
     } finally {
       setBusy(false);
     }
-  }, [apiKeyInput, file, model, preset, topicHint, workerInput]);
+  }, [apiKeyInput, file, model, preset, provider, topicHint, workerInput]);
 
   return (
     <div className="max-w-3xl mx-auto px-4 py-8 space-y-6 pb-16">
@@ -202,15 +273,15 @@ export function AiPage() {
         <p className="text-xs font-medium uppercase tracking-wide text-accent">
           AI · BYOK（自带密钥）
         </p>
-        <h1 className="text-2xl font-semibold text-ink-900">用 Gemini 从文件生成学习材料</h1>
+        <h1 className="text-2xl font-semibold text-ink-900">多模型生成学习材料</h1>
         <p className="text-sm text-ink-600 leading-relaxed">
-          这是<strong>可选功能</strong>：每个使用者在浏览器里填写<strong>自己的</strong>
-          Google Gemini API Key 与<strong>你部署的</strong> Cloudflare Worker 地址。Key
-          只存在本机 localStorage，经 Worker 转发到 Google，不会写进 GitHub 静态站源码。
-          适合教材、论文 PDF、截图、乐理图、概念笔记等；输出可再粘贴到「Today」里当作复习线索。
+          可选功能：每人使用<strong>自己的</strong> API Key + 同一个 Cloudflare Worker 转发。
+          <strong>Gemini</strong> 可走 PDF/图/Office 多模态；
+          <strong>DeepSeek</strong>、<strong>Groq</strong> 为文本对话接口（便宜/快，可把讲义导出成
+          .txt 或把正文贴在「学习主题」）。各厂商是否免费、额度多少以对方官网为准；多线路可分担单家限流。
         </p>
         <p className="text-xs text-ink-500">
-          免费额度以 Google 当前政策为准；Worker 侧见{" "}
+          Worker 部署见{" "}
           <a
             className="text-accent underline"
             href="https://github.com/Sarajir/psychedu/tree/main/workers/gemini-proxy"
@@ -219,14 +290,14 @@ export function AiPage() {
           >
             workers/gemini-proxy
           </a>
-          。
+          （支持 Gemini / DeepSeek / Groq）。
         </p>
       </header>
 
       <section className="card p-6 space-y-4">
-        <h2 className="text-base font-semibold text-ink-900">① 连接设置（各填各的）</h2>
+        <h2 className="text-base font-semibold text-ink-900">① 连接设置</h2>
         <div>
-          <label className="label">Worker URL（Cloudflare 部署后复制）</label>
+          <label className="label">Worker URL</label>
           <input
             className="input font-mono text-xs"
             value={workerInput}
@@ -234,35 +305,52 @@ export function AiPage() {
             placeholder="https://psychedu-gemini-proxy.xxx.workers.dev"
           />
           <p className="text-xs text-ink-500 mt-1">
-            也可在构建时注入环境变量{" "}
+            可选环境变量{" "}
             <code className="bg-ink-100 px-1 rounded">VITE_GEMINI_WORKER_URL</code>{" "}
-            作为默认值；此处保存会覆盖默认。
+            作为默认；此处保存会覆盖。
           </p>
         </div>
         <div>
-          <label className="label">Gemini API Key（Google AI Studio 申请）</label>
+          <label className="label">模型线路</label>
+          <select
+            className="input"
+            value={provider}
+            onChange={(e) => setProvider(e.target.value as LlmProviderId)}
+          >
+            {LLM_PROVIDERS.map((p) => (
+              <option key={p.id} value={p.id}>
+                {p.label}
+              </option>
+            ))}
+          </select>
+          <p className="text-xs text-ink-600 mt-1.5 leading-relaxed">{pcfg.blurb}</p>
+        </div>
+        <div>
+          <label className="label">
+            {pcfg.label} API Key（{pcfg.keyHint}）
+          </label>
           <input
             className="input font-mono text-xs"
             type="password"
             autoComplete="off"
             value={apiKeyInput}
             onChange={(e) => setApiKeyInput(e.target.value)}
-            placeholder="AIza…"
+            placeholder="粘贴密钥"
           />
           <p className="text-xs text-ink-500 mt-1">
-            申请入口：{" "}
+            申请/管理：{" "}
             <a
               className="text-accent underline"
-              href="https://aistudio.google.com/apikey"
+              href={pcfg.keyUrl}
               target="_blank"
               rel="noreferrer"
             >
-              aistudio.google.com/apikey
+              {pcfg.keyUrl.replace(/^https?:\/\//, "")}
             </a>
           </p>
         </div>
         <button type="button" className="btn-primary" onClick={saveSettings}>
-          保存到本浏览器
+          保存 Worker 与当前线路的 Key
         </button>
       </section>
 
@@ -276,7 +364,7 @@ export function AiPage() {
               value={model}
               onChange={(e) => setModel(e.target.value)}
             >
-              {MODELS.map((m) => (
+              {pcfg.models.map((m) => (
                 <option key={m.id} value={m.id}>
                   {m.label}
                 </option>
@@ -299,7 +387,7 @@ export function AiPage() {
           </div>
         </div>
         <div>
-          <label className="label">学习主题 / 场景（可选）</label>
+          <label className="label">学习主题 / 场景（可选；文本线路建议写具体）</label>
           <input
             className="input"
             value={topicHint}
@@ -309,12 +397,21 @@ export function AiPage() {
         </div>
         <div>
           <label className="label">
-            上传材料（可选，≤约 3.5MB；支持 PDF / PPTX / DOCX / 图 / 文本）
+            上传材料（可选，≤约 3.5MB）
+            {provider !== "gemini" && (
+              <span className="normal-case font-normal text-amber-800 ml-1">
+                — 当前线路仅 .txt / .md / .csv 或把内容写进「学习主题」
+              </span>
+            )}
           </label>
           <input
             type="file"
             className="block w-full text-sm text-ink-700 file:mr-3 file:rounded-md file:border file:border-ink-200 file:bg-white file:px-3 file:py-1.5"
-            accept=".pdf,.ppt,.pptx,.doc,.docx,image/*,.txt,.md,.csv,application/pdf,application/vnd.ms-powerpoint,application/vnd.openxmlformats-officedocument.presentationml.presentation,application/vnd.openxmlformats-officedocument.wordprocessingml.document,application/msword,text/plain,text/markdown,text/csv"
+            accept={
+              provider === "gemini"
+                ? ".pdf,.ppt,.pptx,.doc,.docx,image/*,.txt,.md,.csv,application/pdf,application/vnd.ms-powerpoint,application/vnd.openxmlformats-officedocument.presentationml.presentation,application/vnd.openxmlformats-officedocument.wordprocessingml.document,application/msword,text/plain,text/markdown,text/csv"
+                : ".txt,.md,.csv,text/plain,text/markdown"
+            }
             onChange={(e) => setFile(e.target.files?.[0] ?? null)}
           />
           {file && (
@@ -324,7 +421,7 @@ export function AiPage() {
           )}
           {!file && (
             <p className="text-xs text-ink-500 mt-1">
-              不上传时，只会根据「学习主题」生成通用脚手架（质量取决于你写得多具体）。
+              不上传时，主要依据「学习主题」；Gemini 仍可多模态读文件。
             </p>
           )}
         </div>
@@ -334,7 +431,7 @@ export function AiPage() {
           disabled={busy}
           onClick={() => void generate()}
         >
-          {busy ? "生成中…" : "③ 调用 Gemini 生成"}
+          {busy ? "生成中…" : "③ 调用模型生成"}
         </button>
         {error && (
           <p className="text-sm text-rose-700 bg-rose-50 border border-rose-100 rounded-md px-3 py-2 whitespace-pre-wrap">

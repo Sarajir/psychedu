@@ -1,14 +1,30 @@
-export interface GeneratePayload {
+/**
+ * Unified POST /generate to Cloudflare worker.
+ * Body must include `provider`: gemini | deepseek | groq
+ */
+
+export interface GeminiGenerateBody {
+  provider: "gemini";
   model: string;
   contents: unknown;
   generationConfig?: Record<string, unknown>;
   systemInstruction?: { parts: { text: string }[] };
 }
 
-export async function callGeminiProxy(
+export interface ChatGenerateBody {
+  provider: "deepseek" | "groq";
+  model: string;
+  messages: { role: string; content: string }[];
+  temperature?: number;
+  max_tokens?: number;
+}
+
+export type GenerateBody = GeminiGenerateBody | ChatGenerateBody;
+
+export async function callGenerateProxy(
   workerBase: string,
   apiKey: string,
-  payload: GeneratePayload,
+  body: Record<string, unknown>,
 ): Promise<unknown> {
   const base = workerBase.replace(/\/$/, "");
   const url = `${base}/generate`;
@@ -18,7 +34,7 @@ export async function callGeminiProxy(
       "Content-Type": "application/json",
       Authorization: `Bearer ${apiKey}`,
     },
-    body: JSON.stringify(payload),
+    body: JSON.stringify(body),
   });
   const text = await r.text();
   let data: unknown;
@@ -28,10 +44,15 @@ export async function callGeminiProxy(
     data = { raw: text };
   }
   if (!r.ok) {
-    const msg =
-      typeof data === "object" && data && "error" in data
-        ? JSON.stringify((data as { error: unknown }).error)
-        : text || r.statusText;
+    const errObj =
+      typeof data === "object" && data !== null
+        ? (data as { error?: unknown })
+        : null;
+    let msg = text || r.statusText;
+    if (errObj?.error) {
+      const e = errObj.error;
+      msg = typeof e === "string" ? e : JSON.stringify(e);
+    }
     throw new Error(msg || `HTTP ${r.status}`);
   }
   return data;
@@ -50,4 +71,12 @@ export function extractGeminiBlockReason(data: unknown): string | null {
   const d = data as { promptFeedback?: { blockReason?: string } };
   const br = d?.promptFeedback?.blockReason;
   return br ? String(br) : null;
+}
+
+export function extractChatCompletionText(data: unknown): string {
+  const d = data as {
+    choices?: { message?: { content?: string | null } }[];
+  };
+  const c = d?.choices?.[0]?.message?.content;
+  return c == null ? "" : String(c);
 }

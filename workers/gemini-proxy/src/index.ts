@@ -1,14 +1,21 @@
 /**
- * BYOK proxy: browser sends Authorization: Bearer <Gemini API key>.
- * Body is forwarded to Google generateContent (minus the key).
- * Never log the API key.
+ * BYOK LLM proxy: browser sends Authorization: Bearer <user API key for that provider>.
+ * Routes: Google Gemini | DeepSeek | Groq (OpenAI-compatible chat completions).
+ * Never log API keys.
  */
 
 export interface Env {
   ALLOWED_ORIGINS?: string;
 }
 
-const MAX_BODY_BYTES = 18 * 1024 * 1024; // stay under Worker limits; client caps smaller
+const MAX_BODY_BYTES = 18 * 1024 * 1024;
+
+const UPSTREAM = {
+  gemini: (model: string, apiKey: string) =>
+    `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(model)}:generateContent?key=${encodeURIComponent(apiKey)}`,
+  deepseek: () => "https://api.deepseek.com/chat/completions",
+  groq: () => "https://api.groq.com/openai/v1/chat/completions",
+} as const;
 
 function parseAllowed(env: Env): string[] {
   const raw = env.ALLOWED_ORIGINS ?? "";
@@ -42,10 +49,25 @@ function cors(origin: string | null, allowed: string[]): Headers {
   return h;
 }
 
-function sanitizeModel(model: unknown): string {
+function sanitizeGeminiModel(model: unknown): string {
   const s = String(model || "gemini-2.0-flash");
   if (!/^[a-zA-Z0-9._-]+$/.test(s)) return "gemini-2.0-flash";
   return s;
+}
+
+function sanitizeChatModel(model: unknown): string {
+  const s = String(model || "deepseek-chat");
+  if (!/^[a-zA-Z0-9._:-]+$/.test(s)) return "deepseek-chat";
+  return s;
+}
+
+function inferProvider(body: Record<string, unknown>): "gemini" | "deepseek" | "groq" {
+  const p = String(body.provider || "").toLowerCase();
+  if (p === "deepseek") return "deepseek";
+  if (p === "groq") return "groq";
+  if (p === "gemini") return "gemini";
+  if (Array.isArray(body.contents)) return "gemini";
+  return "gemini";
 }
 
 export default {
@@ -66,8 +88,9 @@ export default {
       return new Response(
         JSON.stringify({
           ok: true,
-          service: "psychedu-gemini-proxy",
-          usage: "POST /generate with Authorization: Bearer <Gemini API key>",
+          service: "psychedu-llm-proxy",
+          usage:
+            "POST /generate — body: { provider: gemini|deepseek|groq, ... } + Authorization: Bearer <that provider's API key>",
         }),
         { headers: h },
       );
@@ -90,10 +113,12 @@ export default {
     if (!m?.[1]?.trim()) {
       const h = cors(origin, allowed);
       h.set("Content-Type", "application/json");
-      return new Response(JSON.stringify({ error: "Missing Authorization: Bearer <Gemini API key>" }), {
-        status: 401,
-        headers: h,
-      });
+      return new Response(
+        JSON.stringify({
+          error: "Missing Authorization: Bearer <API key for the selected provider>",
+        }),
+        { status: 401, headers: h },
+      );
     }
     const apiKey = m[1].trim();
 
@@ -119,34 +144,67 @@ export default {
       });
     }
 
-    const model = sanitizeModel(body.model);
-    const contents = body.contents;
-    if (!Array.isArray(contents)) {
-      const h = cors(origin, allowed);
-      h.set("Content-Type", "application/json");
-      return new Response(JSON.stringify({ error: "contents must be an array" }), {
+    const provider = inferProvider(body);
+    const h = cors(origin, allowed);
+    const ctJson = "application/json";
+
+    if (provider === "gemini") {
+      const model = sanitizeGeminiModel(body.model);
+      const contents = body.contents;
+      if (!Array.isArray(contents)) {
+        h.set("Content-Type", ctJson);
+        return new Response(JSON.stringify({ error: "contents must be an array" }), {
+          status: 400,
+          headers: h,
+        });
+      }
+      const upstreamBody: Record<string, unknown> = { contents };
+      if (body.generationConfig && typeof body.generationConfig === "object")
+        upstreamBody.generationConfig = body.generationConfig;
+      if (body.systemInstruction && typeof body.systemInstruction === "object")
+        upstreamBody.systemInstruction = body.systemInstruction;
+
+      const gUrl = UPSTREAM.gemini(model, apiKey);
+      const gr = await fetch(gUrl, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(upstreamBody),
+      });
+      h.set("Content-Type", gr.headers.get("Content-Type") || ctJson);
+      return new Response(gr.body, { status: gr.status, headers: h });
+    }
+
+    const messages = body.messages;
+    if (!Array.isArray(messages) || messages.length === 0) {
+      h.set("Content-Type", ctJson);
+      return new Response(JSON.stringify({ error: "messages must be a non-empty array" }), {
         status: 400,
         headers: h,
       });
     }
 
-    const upstreamBody: Record<string, unknown> = { contents };
-    if (body.generationConfig && typeof body.generationConfig === "object")
-      upstreamBody.generationConfig = body.generationConfig;
-    if (body.systemInstruction && typeof body.systemInstruction === "object")
-      upstreamBody.systemInstruction = body.systemInstruction;
+    const model = sanitizeChatModel(body.model);
+    const upstreamUrl =
+      provider === "groq" ? UPSTREAM.groq() : UPSTREAM.deepseek();
 
-    const gUrl = `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(model)}:generateContent?key=${encodeURIComponent(apiKey)}`;
+    const payload: Record<string, unknown> = {
+      model,
+      messages,
+      temperature: typeof body.temperature === "number" ? body.temperature : 0.35,
+      max_tokens: typeof body.max_tokens === "number" ? body.max_tokens : 8192,
+      stream: false,
+    };
 
-    const gr = await fetch(gUrl, {
+    const gr = await fetch(upstreamUrl, {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(upstreamBody),
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${apiKey}`,
+      },
+      body: JSON.stringify(payload),
     });
 
-    const h = cors(origin, allowed);
-    const ct = gr.headers.get("Content-Type") || "application/json";
-    h.set("Content-Type", ct);
+    h.set("Content-Type", gr.headers.get("Content-Type") || ctJson);
     return new Response(gr.body, { status: gr.status, headers: h });
   },
 };

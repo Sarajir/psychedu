@@ -1,6 +1,14 @@
-# psychedu Gemini BYOK proxy (Cloudflare Worker)
+# psychedu LLM BYOK proxy (Cloudflare Worker)
 
-This worker forwards `generateContent` requests to Google’s Gemini API so your static site (e.g. GitHub Pages) can call Gemini **without exposing API keys in the frontend bundle**. Each user still brings **their own** Gemini API key (`Authorization: Bearer …`); the worker does **not** store keys.
+This worker forwards requests so your static site (e.g. GitHub Pages) can call **Google Gemini**, **DeepSeek**, or **Groq** with **BYOK** (`Authorization: Bearer <that provider’s API key>`). The worker does **not** store keys.
+
+Supported upstreams (allowlisted only):
+
+| `provider` (JSON body) | Upstream |
+|--------------------------|----------|
+| `gemini` (default if `contents` array present) | `generativelanguage.googleapis.com` |
+| `deepseek` | `https://api.deepseek.com/chat/completions` |
+| `groq` | `https://api.groq.com/openai/v1/chat/completions` |
 
 ## Deploy
 
@@ -16,7 +24,16 @@ This worker forwards `generateContent` requests to Google’s Gemini API so your
 
 - `GET /` — health + usage JSON
 - `OPTIONS /generate` — CORS preflight
-- `POST /generate` — body matches Gemini `generateContent` JSON (`model`, `contents`, optional `generationConfig`, `systemInstruction`). Header: `Authorization: Bearer <Gemini API key>`.
+- `POST /generate` — Header: `Authorization: Bearer <API key for the provider you chose>`.
+
+**Gemini** (same as before; optional `"provider": "gemini"`):
+
+- Body: `{ "model", "contents", optional "generationConfig", "systemInstruction" }`  
+- Backward compatible: if `"provider"` is omitted but `contents` is an array, it is treated as Gemini.
+
+**DeepSeek / Groq** (OpenAI-style chat):
+
+- Body: `{ "provider": "deepseek" | "groq", "model", "messages": [{ "role","content" }, ...], optional "temperature", "max_tokens" }`
 
 ## Limits
 

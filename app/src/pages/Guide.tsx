@@ -62,8 +62,9 @@ export function GuidePage({ onStart }: Props) {
       <section className="card p-6 space-y-2 border-ink-100">
         <h2 className="text-base font-semibold text-ink-900">可选：「AI」页是干什么的？</h2>
         <p className="text-sm text-ink-700 leading-relaxed">
-          顶部导航的<strong>「AI」</strong>是<strong>额外脚手架</strong>：你上传 PDF/图片或说明主题，用<strong>自己的</strong>
-          Gemini API Key + 你部署的 Cloudflare Worker，让模型生成「复习提纲 / 填空 / 问答卡」等<strong>中文学习材料</strong>。
+          顶部导航的<strong>「AI」</strong>是<strong>额外脚手架</strong>：可选 <strong>Gemini</strong>（PDF/图/Office
+          多模态）、<strong>DeepSeek</strong>、<strong>Groq</strong> 等线路，每人用<strong>自己的</strong> API
+          Key + 同一个 Cloudflare Worker 转发，生成「复习提纲 / 填空 / 问答卡」等<strong>中文学习材料</strong>。
           它<strong>不替代</strong>上面的「预测—闭卷—对照」闭环；更合理的用法是：把生成内容当作「材料」，再放进「Today」里做闭卷与校准。
         </p>
         <p className="text-xs text-ink-500">
