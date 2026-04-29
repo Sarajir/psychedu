@@ -1,7 +1,10 @@
-import { defineConfig } from 'vite'
-import react from '@vitejs/plugin-react'
+import { defineConfig } from "vite";
+import react from "@vitejs/plugin-react";
 
-// https://vite.dev/config/
+// GitHub Pages project site: https://<user>.github.io/psychedu/
+const base = process.env.BASE_PATH?.trim() || "/";
+
 export default defineConfig({
   plugins: [react()],
-})
+  base: base.endsWith("/") ? base : `${base}/`,
+});
