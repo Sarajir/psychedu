@@ -23,8 +23,21 @@ Supported upstreams (allowlisted only):
 ## Endpoints
 
 - `GET /` — health + usage JSON
-- `OPTIONS /generate` — CORS preflight
+- `OPTIONS` — CORS preflight for any route below
 - `POST /generate` — Header: `Authorization: Bearer <API key for the provider you chose>`.
+
+### Gemini large files (Files API, chunked)
+
+The web app can upload files **larger than the inline base64 limit** by calling these routes (same `Authorization: Bearer <Gemini API key>` as `/generate`):
+
+1. **`POST /gemini/file-upload/start`** — JSON body `{ "mimeType", "byteSize", "displayName" }`. Returns `{ "ok": true, "uploadUrl", "byteSize" }` where `uploadUrl` is Google’s resumable session URL (opaque; do not log).
+2. **`POST /gemini/file-upload/part`** — Raw body = one chunk (≤ 32 MiB). Headers:
+   - `X-Gemini-Upload-Url`: exact `uploadUrl` from step 1 (host must be `generativelanguage.googleapis.com`)
+   - `X-Goog-Upload-Offset`: byte offset (string)
+   - `X-Goog-Upload-Command`: `upload` or `upload, finalize` (last chunk uses `upload, finalize`)
+   - `Content-Length`: chunk size  
+   Forwards to Google using the same protocol as [Files API resumable upload](https://ai.google.dev/gemini-api/docs/files). Final chunk response body is Google’s JSON (contains `file.uri` for `generateContent`).
+3. **`GET /gemini/file?name=files%2F…`** — Proxies `GET …/v1beta/files/{id}` so the browser can poll until `state` is `ACTIVE`.
 
 **Gemini** (same as before; optional `"provider": "gemini"`):
 
@@ -37,7 +50,8 @@ Supported upstreams (allowlisted only):
 
 ## Limits
 
-- Request body capped in worker (~40 MB JSON). The web UI caps **raw** upload to **~10 MB** per file (base64 inflates the payload). Decks with many images often exceed this — export a **subset of slides to PDF** or compress media, then upload.
+- **`POST /generate`**: JSON body capped (~40 MB). Inline PDF/Office in JSON is impractical beyond ~10 MB raw; use **chunked file upload** above instead (per-file up to **2 GB** on Google’s side; each chunk ≤ **32 MiB** through the worker).
+- **Cloudflare**: each `POST /gemini/file-upload/part` must stay under the chunk limit; total file size is limited by Google (2 GB) and your account quotas.
 
 ## Security notes
 

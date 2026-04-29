@@ -11,16 +11,25 @@ import {
   extractGeminiText,
 } from "../lib/llmProxy";
 import {
+  GEMINI_MAX_UPLOAD_BYTES,
+  uploadGeminiFileViaWorker,
+} from "../lib/geminiFileUpload";
+import {
   getApiKeyForProvider,
   getGeminiWorkerBase,
   setApiKeyForProvider,
   setGeminiWorkerBase,
 } from "../lib/llmConfig";
+import {
+  inferMime,
+  isBinaryMultimodal,
+  isPlainTextLikeMime,
+} from "../lib/inferMime";
 import { LLM_PROVIDERS, providerById, type LlmProviderId } from "../lib/llmProviders";
 
 /**
  * Max raw file size for inline upload (base64 expands ~33% in JSON).
- * 整份大 PPT（几十～上百 MB）无法走浏览器单次 JSON，需拆分/压缩/导出部分 PDF。
+ * 更大文件走 Gemini Files API（Worker 分块上传）。
  */
 const MAX_INLINE_BYTES = 10 * 1024 * 1024;
 
@@ -28,52 +37,18 @@ function mb(bytes: number): string {
   return (bytes / 1024 / 1024).toFixed(1);
 }
 
-function fileTooLargeMessage(file: File): string {
+function fileTooLargeForChatProvidersMessage(file: File): string {
   return [
-    `你选的文件约 ${mb(file.size)} MB，超过本页单次上限（${mb(MAX_INLINE_BYTES)} MB）。`,
-    `整份课件常含大量图片/视频，即使用更大服务器也无法在浏览器里「一次塞进」请求。`,
-    `可以：① PowerPoint「另存为 → PDF」并只勾选本章几页；②「文件 → 压缩媒体」后再导出；③ 把大纲粘贴到「学习主题」；④ 拆成多份小于 ${mb(MAX_INLINE_BYTES)} MB 的 PDF 分次生成。`,
+    `你选的文件约 ${mb(file.size)} MB，超过本页 DeepSeek / Groq 单次上限（${mb(MAX_INLINE_BYTES)} MB）。`,
+    `这两条线路只走纯文本 JSON。可以：① 改用 **Gemini** 并部署最新 Worker 以支持大文件分块上传；② 把正文导出成 .txt/.md；③ 把大纲写进「学习主题」。`,
   ].join("\n");
 }
 
-function inferMime(file: File): string {
-  if (file.type && file.type !== "application/octet-stream") return file.type;
-  const n = file.name.toLowerCase();
-  if (n.endsWith(".pdf")) return "application/pdf";
-  if (n.endsWith(".png")) return "image/png";
-  if (n.endsWith(".jpg") || n.endsWith(".jpeg")) return "image/jpeg";
-  if (n.endsWith(".webp")) return "image/webp";
-  if (n.endsWith(".gif")) return "image/gif";
-  if (n.endsWith(".txt")) return "text/plain";
-  if (n.endsWith(".md")) return "text/markdown";
-  if (n.endsWith(".csv")) return "text/csv";
-  if (n.endsWith(".pptx")) {
-    return "application/vnd.openxmlformats-officedocument.presentationml.presentation";
-  }
-  if (n.endsWith(".ppt")) return "application/vnd.ms-powerpoint";
-  if (n.endsWith(".docx")) {
-    return "application/vnd.openxmlformats-officedocument.wordprocessingml.document";
-  }
-  if (n.endsWith(".doc")) return "application/msword";
-  return file.type || "application/octet-stream";
-}
-
-function isOfficeDocumentMime(m: string): boolean {
-  return (
-    m === "application/msword" ||
-    m === "application/vnd.openxmlformats-officedocument.wordprocessingml.document" ||
-    m === "application/vnd.ms-powerpoint" ||
-    m === "application/vnd.openxmlformats-officedocument.presentationml.presentation" ||
-    m === "application/vnd.openxmlformats-officedocument.presentationml.slideshow"
-  );
-}
-
-function isBinaryMultimodal(mime: string): boolean {
-  return (
-    mime === "application/pdf" ||
-    mime.startsWith("image/") ||
-    isOfficeDocumentMime(mime)
-  );
+function geminiLargeFileInfo(file: File): string {
+  return [
+    `已选约 ${mb(file.size)} MB。将经 **Worker 分块** 上传到 **Google Gemini Files API**，再调用模型生成（请保持页面打开，首次可能较慢）。`,
+    `单文件上限以 Google 为准（约 2 GB）；需已部署支持 \`/gemini/file-upload/*\` 的 Worker。`,
+  ].join("\n");
 }
 
 function readFileAsBase64(file: File): Promise<string> {
@@ -109,6 +84,7 @@ export function AiPage() {
   const [topicHint, setTopicHint] = useState("");
   const [file, setFile] = useState<File | null>(null);
   const [busy, setBusy] = useState(false);
+  const [busyHint, setBusyHint] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [output, setOutput] = useState("");
   const [fileHint, setFileHint] = useState<string | null>(null);
@@ -131,8 +107,12 @@ export function AiPage() {
       setFileHint(null);
       return;
     }
-    if (file.size > MAX_INLINE_BYTES) {
-      setFileHint(fileTooLargeMessage(file));
+    if (file.size > GEMINI_MAX_UPLOAD_BYTES) {
+      setFileHint(
+        `文件约 ${mb(file.size)} MB，超过 Google Files API 单文件上限（约 2 GB）。请压缩或拆分后再试。`,
+      );
+    } else if (file.size > MAX_INLINE_BYTES) {
+      setFileHint(geminiLargeFileInfo(file));
     } else {
       setFileHint(null);
     }
@@ -170,17 +150,49 @@ export function AiPage() {
       systemInstruction?.parts?.map((x) => x.text).join("\n") ?? "";
 
     setBusy(true);
+    setBusyHint(null);
     try {
       if (provider === "gemini") {
         const parts: Record<string, unknown>[] = [];
 
         if (file) {
-          if (file.size > MAX_INLINE_BYTES) {
-            setError(fileTooLargeMessage(file));
+          if (file.size > GEMINI_MAX_UPLOAD_BYTES) {
+            setError(
+              `文件约 ${mb(file.size)} MB，超过 Google Files API 单文件上限（约 2 GB）。请压缩或拆分后再试。`,
+            );
             return;
           }
           const mime = inferMime(file);
-          if (isBinaryMultimodal(mime)) {
+          const useFilesApi =
+            file.size > MAX_INLINE_BYTES &&
+            (isBinaryMultimodal(mime) || isPlainTextLikeMime(mime, file.name));
+
+          if (file.size > MAX_INLINE_BYTES && !useFilesApi) {
+            setError(
+              `暂不支持的文件类型（大文件）：${mime}。大文件请用 PDF、Office、图片，或 .txt/.md/.csv；或压缩到约 ${mb(MAX_INLINE_BYTES)} MB 以下走内联上传。`,
+            );
+            return;
+          }
+
+          if (useFilesApi) {
+            setBusyHint("正在分块上传到 Google（经 Worker）…");
+            const uploaded = await uploadGeminiFileViaWorker(worker, key, file, (p) => {
+              if (p.phase === "upload") {
+                const pct =
+                  p.total > 0 ? Math.min(99, Math.round((100 * p.sent) / p.total)) : 0;
+                setBusyHint(`上传中 ${pct}%…`);
+              } else {
+                setBusyHint("文件处理中，请稍候…");
+              }
+            });
+            setBusyHint("正在调用模型生成…");
+            parts.push({
+              file_data: {
+                mime_type: uploaded.mimeType,
+                file_uri: uploaded.fileUri,
+              },
+            });
+          } else if (isBinaryMultimodal(mime)) {
             const b64 = await readFileAsBase64(file);
             parts.push({
               inline_data: {
@@ -188,13 +200,7 @@ export function AiPage() {
                 data: b64,
               },
             });
-          } else if (
-            mime === "text/plain" ||
-            mime === "text/markdown" ||
-            mime === "text/csv" ||
-            file.name.endsWith(".md") ||
-            file.name.endsWith(".txt")
-          ) {
+          } else if (isPlainTextLikeMime(mime, file.name)) {
             const txt = await readFileAsText(file);
             parts.push({
               text: `【用户上传的文本文件：${file.name}】\n${txt.slice(0, 120_000)}`,
@@ -246,7 +252,7 @@ export function AiPage() {
           return;
         }
         if (file.size > MAX_INLINE_BYTES) {
-          setError(fileTooLargeMessage(file));
+          setError(fileTooLargeForChatProvidersMessage(file));
           return;
         }
       }
@@ -293,6 +299,7 @@ export function AiPage() {
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
     } finally {
+      setBusyHint(null);
       setBusy(false);
     }
   }, [apiKeyInput, file, model, preset, provider, topicHint, workerInput]);
@@ -427,7 +434,7 @@ export function AiPage() {
         </div>
         <div>
           <label className="label">
-            上传材料（可选，Gemini 单文件 ≤ 约 {mb(MAX_INLINE_BYTES)} MB）
+            上传材料（可选；Gemini 小文件 ≤ 约 {mb(MAX_INLINE_BYTES)} MB 内联，更大走 Files API 分块至约 2 GB）
             {provider !== "gemini" && (
               <span className="normal-case font-normal text-amber-800 ml-1">
                 — 当前线路仅 .txt / .md / .csv 或把内容写进「学习主题」
@@ -454,7 +461,13 @@ export function AiPage() {
             </p>
           )}
           {fileHint && (
-            <p className="text-xs text-amber-900 bg-amber-50 border border-amber-200 rounded-md px-3 py-2 mt-2 whitespace-pre-line leading-relaxed">
+            <p
+              className={`text-xs rounded-md px-3 py-2 mt-2 whitespace-pre-line leading-relaxed border ${
+                file && file.size > GEMINI_MAX_UPLOAD_BYTES
+                  ? "text-rose-900 bg-rose-50 border-rose-200"
+                  : "text-sky-900 bg-sky-50 border-sky-200"
+              }`}
+            >
               {fileHint}
             </p>
           )}
@@ -470,11 +483,11 @@ export function AiPage() {
           disabled={
             busy ||
             (provider === "gemini" &&
-              Boolean(file && file.size > MAX_INLINE_BYTES))
+              Boolean(file && file.size > GEMINI_MAX_UPLOAD_BYTES))
           }
           onClick={() => void generate()}
         >
-          {busy ? "生成中…" : "③ 调用模型生成"}
+          {busy ? (busyHint ?? "生成中…") : "③ 调用模型生成"}
         </button>
         {error && (
           <p className="text-sm text-rose-700 bg-rose-50 border border-rose-100 rounded-md px-3 py-2 whitespace-pre-wrap">
