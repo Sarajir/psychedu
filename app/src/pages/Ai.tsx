@@ -36,7 +36,25 @@ function inferMime(file: File): string {
   if (n.endsWith(".txt")) return "text/plain";
   if (n.endsWith(".md")) return "text/markdown";
   if (n.endsWith(".csv")) return "text/csv";
+  if (n.endsWith(".pptx")) {
+    return "application/vnd.openxmlformats-officedocument.presentationml.presentation";
+  }
+  if (n.endsWith(".ppt")) return "application/vnd.ms-powerpoint";
+  if (n.endsWith(".docx")) {
+    return "application/vnd.openxmlformats-officedocument.wordprocessingml.document";
+  }
+  if (n.endsWith(".doc")) return "application/msword";
   return file.type || "application/octet-stream";
+}
+
+function isOfficeDocumentMime(m: string): boolean {
+  return (
+    m === "application/msword" ||
+    m === "application/vnd.openxmlformats-officedocument.wordprocessingml.document" ||
+    m === "application/vnd.ms-powerpoint" ||
+    m === "application/vnd.openxmlformats-officedocument.presentationml.presentation" ||
+    m === "application/vnd.openxmlformats-officedocument.presentationml.slideshow"
+  );
 }
 
 function readFileAsBase64(file: File): Promise<string> {
@@ -112,7 +130,11 @@ export function AiPage() {
         return;
       }
       const mime = inferMime(file);
-      if (mime === "application/pdf" || mime.startsWith("image/")) {
+      if (
+        mime === "application/pdf" ||
+        mime.startsWith("image/") ||
+        isOfficeDocumentMime(mime)
+      ) {
         const b64 = await readFileAsBase64(file);
         parts.push({
           inline_data: {
@@ -132,7 +154,9 @@ export function AiPage() {
           text: `【用户上传的文本文件：${file.name}】\n${txt.slice(0, 120_000)}`,
         });
       } else {
-        setError(`暂不支持的文件类型：${mime}。请用 PDF、常见图片，或 .txt/.md。`);
+        setError(
+          `暂不支持的文件类型：${mime}。请用 PDF、PPT/PPTX、Word、常见图片，或 .txt/.md。（若 Office 文件生成失败，可另存为 PDF 再试）`,
+        );
         return;
       }
     }
@@ -284,11 +308,13 @@ export function AiPage() {
           />
         </div>
         <div>
-          <label className="label">上传材料（可选，≤约 3.5MB）</label>
+          <label className="label">
+            上传材料（可选，≤约 3.5MB；支持 PDF / PPTX / DOCX / 图 / 文本）
+          </label>
           <input
             type="file"
             className="block w-full text-sm text-ink-700 file:mr-3 file:rounded-md file:border file:border-ink-200 file:bg-white file:px-3 file:py-1.5"
-            accept=".pdf,image/*,.txt,.md,.csv,text/plain,text/markdown"
+            accept=".pdf,.ppt,.pptx,.doc,.docx,image/*,.txt,.md,.csv,application/pdf,application/vnd.ms-powerpoint,application/vnd.openxmlformats-officedocument.presentationml.presentation,application/vnd.openxmlformats-officedocument.wordprocessingml.document,application/msword,text/plain,text/markdown,text/csv"
             onChange={(e) => setFile(e.target.files?.[0] ?? null)}
           />
           {file && (

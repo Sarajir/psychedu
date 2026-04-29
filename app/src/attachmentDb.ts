@@ -12,8 +12,28 @@ interface StoredRecord extends AttachmentMeta {
 /** Per-file limit (IndexedDB is per-origin; keep uploads reasonable). */
 export const MAX_ATTACHMENT_BYTES = 40 * 1024 * 1024;
 
-export const ACCEPT_ATTR =
-  ".pdf,.doc,.docx,.ppt,.pptx,.txt,.md,.csv,.rtf,application/pdf,text/plain,text/markdown";
+/** Extensions + MIME types so Safari / Windows file picker reliably shows Office files */
+export const ACCEPT_ATTR = [
+  ".pdf",
+  ".doc",
+  ".docx",
+  ".ppt",
+  ".pptx",
+  ".txt",
+  ".md",
+  ".csv",
+  ".rtf",
+  "application/pdf",
+  "application/msword",
+  "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+  "application/vnd.ms-powerpoint",
+  "application/vnd.openxmlformats-officedocument.presentationml.presentation",
+  "application/vnd.openxmlformats-officedocument.presentationml.slideshow",
+  "text/plain",
+  "text/markdown",
+  "text/csv",
+  "application/rtf",
+].join(",");
 
 function openDb(): Promise<IDBDatabase> {
   return new Promise((resolve, reject) => {
