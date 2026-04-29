@@ -66,6 +66,10 @@ export function TodayPage({ onSaved }: Props) {
   }
 
   function startRetrieve() {
+    if (!prediction.trim()) return;
+    if (!topic.trim()) {
+      setTopic(type === "reading" ? "Reading unit" : "Concept unit");
+    }
     setStage("retrieve");
     setTimerRunning(true);
   }
@@ -277,11 +281,11 @@ export function TodayPage({ onSaved }: Props) {
             allowUpload
           />
 
-          <div className="flex items-center justify-between pt-2">
-            <div className="text-xs text-ink-500">
+          <div className="flex flex-col gap-3 pt-2 sm:flex-row sm:items-center sm:justify-between">
+            <div className="text-xs text-ink-500 order-2 sm:order-1">
               Closed-book retrieval limit:{" "}
               <select
-                className="ml-1 rounded border border-ink-300 px-1 py-0.5 text-xs"
+                className="ml-1 rounded border border-ink-300 px-1 py-0.5 text-xs bg-white"
                 value={timerSeconds}
                 onChange={(e) => setTimerSeconds(Number(e.target.value))}
               >
@@ -292,14 +296,21 @@ export function TodayPage({ onSaved }: Props) {
                 <option value={300}>5 min</option>
               </select>
             </div>
-            <button
-              type="button"
-              className="btn-primary"
-              onClick={startRetrieve}
-              disabled={!topic.trim() || !prediction.trim()}
-            >
-              Start closed-book recall →
-            </button>
+            <div className="order-1 sm:order-2 flex flex-col items-stretch sm:items-end gap-1.5 w-full sm:w-auto">
+              <button
+                type="button"
+                className="btn-primary w-full sm:w-auto min-h-[44px]"
+                onClick={startRetrieve}
+                disabled={!prediction.trim()}
+              >
+                Start closed-book recall →
+              </button>
+              {!prediction.trim() && (
+                <p className="text-xs text-amber-800 text-center sm:text-right">
+                  请先填写「One testable prediction」一句话，按钮即可点击。
+                </p>
+              )}
+            </div>
           </div>
         </section>
       )}
