@@ -133,6 +133,10 @@ export function TodayPage({ onSaved }: Props) {
           Predict before you study, then write a closed-book recall, then
           compare. The system stores everything for you.
         </p>
+        <p className="text-xs text-ink-500 mt-2">
+          不清楚每一步在做什么？请点顶部导航里的{" "}
+          <strong className="text-ink-700">「入门」</strong>查看中文教程。
+        </p>
       </header>
 
       {stage !== "saved" && (
